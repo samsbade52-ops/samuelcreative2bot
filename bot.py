@@ -1,5 +1,5 @@
 """
-Samuel Creative Bot v2.0 - Production Ready
+Samuel Creative Bot v2.0 - Production Ready with Healthcheck
 @samuelcreative2bot
 """
 
@@ -16,6 +16,10 @@ from functools import wraps
 from typing import Optional, Tuple, Dict, Any
 from threading import Thread
 import traceback
+
+# HTTP server for healthchecks
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 
 # Telegram imports
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -79,7 +83,35 @@ RETRY_DELAY = 2
 REQUEST_TIMEOUT = 30
 IMAGE_TIMEOUT = 60
 
-# Rate limiting
+# ============= HEALTH CHECK SERVER =============
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """Simple HTTP handler for health checks"""
+    
+    def do_GET(self):
+        if self.path == '/health' or self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        # Suppress healthcheck logs
+        if '/health' not in args[0] if args else False:
+            logger.info(f"Healthcheck: {format % args}")
+
+def run_healthcheck_server():
+    """Run a simple HTTP server for health checks"""
+    port = int(os.environ.get('PORT', 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    logger.info(f"🩺 Healthcheck server running on port {port}")
+    server.serve_forever()
+
+# ============= RATE LIMITING =============
+
 class RateLimiter:
     """Simple rate limiter to prevent API abuse"""
     def __init__(self):
@@ -102,7 +134,8 @@ class RateLimiter:
 
 rate_limiter = RateLimiter()
 
-# Error handling decorator
+# ============= ERROR DECORATORS =============
+
 def safe_command(func):
     """Decorator to handle errors in commands gracefully"""
     @wraps(func)
@@ -725,6 +758,11 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     """Start the bot with all handlers"""
     try:
+        # Start healthcheck server in a separate thread
+        health_thread = threading.Thread(target=run_healthcheck_server, daemon=True)
+        health_thread.start()
+        logger.info("🩺 Healthcheck server started in background thread")
+        
         # Create persistence for better reliability
         persistence = PicklePersistence(filepath="bot_data.pickle")
         
